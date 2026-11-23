@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101827">
+  <title>My Photo Gallery</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b1220; --panel:#121d30; --muted:#aab7ca; --accent:#65d6b2; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:#f5f7fb; }
+    header { padding:42px 20px 30px; text-align:center; background:linear-gradient(135deg,#14243a,#183b4b); }
+    header h1 { margin:0 0 9px; font-size:clamp(2rem,6vw,3.2rem); }
+    header p { margin:0; color:#d1dce9; }
+    main { width:min(1180px,94%); margin:26px auto 60px; }
+    .toolbar { display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-bottom:18px; }
+    #status { color:var(--muted); font-size:.95rem; }
+    input { width:min(100%,330px); padding:12px 14px; border-radius:12px; border:1px solid #34445d; background:var(--panel); color:white; font:inherit; }
+    #gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; }
+    .photo { overflow:hidden; border-radius:15px; background:var(--panel); border:1px solid #26364d; }
+    .photo img { display:block; width:100%; aspect-ratio:4/3; object-fit:cover; background:#1c2a3e; }
+    .photo-info { padding:12px; }
+    .filename { color:#e5edf7; font-size:.86rem; overflow-wrap:anywhere; margin-bottom:10px; }
+    .download { display:inline-block; text-decoration:none; background:var(--accent); color:#092019; font-weight:700; padding:9px 13px; border-radius:9px; }
+    .message { padding:28px 16px; text-align:center; border:1px dashed #40516b; border-radius:14px; color:var(--muted); }
+    footer { text-align:center; padding:20px; color:#8190a5; font-size:.85rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>My Photo Gallery</h1>
+    <p>Browse the photos and download the ones you love.</p>
+  </header>
+  <main>
+    <div class="toolbar">
+      <div id="status" role="status">Connecting to the photo gallery…</div>
+      <input id="search" type="search" placeholder="Search photos…" aria-label="Search photos">
+    </div>
+    <div id="gallery"><div class="message">Loading photos…</div></div>
+  </main>
+  <footer>Photo gallery</footer>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    // Replace these two values with your own Supabase Project URL and Publishable key.
+    const SUPABASE_URL = 'PASTE_YOUR_PROJECT_URL_HERE';
+    const SUPABASE_PUBLISHABLE_KEY = 'PASTE_YOUR_PUBLISHABLE_KEY_HERE';
+    // This must match the bucket name exactly. Your bucket is named "Photos".
+    const BUCKET_NAME = 'Photos';
+
+    const gallery = document.getElementById('gallery');
+    const status = document.getElementById('status');
+    const search = document.getElementById('search');
+    let allPhotos = [];
+
+    function showMessage(message) {
+      gallery.innerHTML = '';
+      const box = document.createElement('div');
+      box.className = 'message';
+      box.textContent = message;
+      gallery.appendChild(box);
+    }
+
+    function renderPhotos() {
+      const term = search.value.trim().toLowerCase();
+      const photos = allPhotos.filter(photo => photo.name.toLowerCase().includes(term));
+      gallery.innerHTML = '';
+      if (!photos.length) {
+        showMessage(term ? 'No photos match that search.' : 'No photos have been uploaded yet.');
+        return;
+      }
+
+      for (const photo of photos) {
+        const publicUrl = photo.url;
+        const card = document.createElement('article');
+        card.className = 'photo';
+
+        const img = document.createElement('img');
+        img.src = publicUrl;
+        img.alt = photo.name;
+        img.loading = 'lazy';
+        img.onerror = () => { img.alt = 'Photo could not be loaded'; };
+
+        const info = document.createElement('div');
+        info.className = 'photo-info';
+
+        const filename = document.createElement('div');
+        filename.className = 'filename';
+        filename.textContent = photo.name;
+
+        const link = document.createElement('a');
+        link.className = 'download';
+        link.href = publicUrl + (publicUrl.includes('?') ? '&' : '?') + 'download';
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'Download photo';
+
+        info.append(filename, link);
+        card.append(img, info);
+        gallery.appendChild(card);
+      }
+      status.textContent = `${photos.length} photo${photos.length === 1 ? '' : 's'} shown`;
+    }
+
+    async function loadPhotos() {
+      if (SUPABASE_URL.includes('PASTE_') || SUPABASE_PUBLISHABLE_KEY.includes('PASTE_')) {
+        status.textContent = 'Setup needed';
+        showMessage('Open index.html and add your Supabase Project URL and Publishable key in the setup section.');
+        return;
+      }
+
+      try {
+        const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+        const { data, error } = await supabase.storage
+          .from(BUCKET_NAME)
+          .list('', { limit: 500, offset: 0, sortBy: { column: 'name', order: 'asc' } });
+
+        if (error) throw error;
+
+        allPhotos = (data || [])
+          .filter(item => item.name && !item.name.startsWith('.'))
+          .map(item => {
+            const { data: urlData } = supabase.storage.from(BUCKET_NAME).getPublicUrl(item.name);
+            return { name: item.name, url: urlData.publicUrl };
+          });
+
+        renderPhotos();
+        if (allPhotos.length === 0) status.textContent = 'No photos found';
+      } catch (error) {
+        console.error(error);
+        status.textContent = 'Could not load photos';
+        showMessage('The gallery could not load. Check that the Project URL, Publishable key and bucket name are correct, and that the Photos bucket is public.');
+      }
+    }
+
+    search.addEventListener('input', renderPhotos);
+    loadPhotos();
+  </script>
+</body>
+</html>
